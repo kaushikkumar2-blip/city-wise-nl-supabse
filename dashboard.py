@@ -114,7 +114,8 @@ def load_data(path: str) -> pd.DataFrame:
 # ═════════════════════════════════════════════════════════════════════════════
 def _safe_pct(num, den):
     """Vectorised safe percentage: returns 0 where denominator is 0."""
-    return np.where(den > 0, num / den * 100, 0.0)
+    den_safe = np.where(den > 0, den, 1)
+    return np.where(den > 0, num / den_safe * 100, 0.0)
 
 
 def _add_pct_cols(df):
@@ -265,7 +266,7 @@ with st.sidebar:
     )
     rc1, rc2 = st.columns([1, 1])
     with rc1:
-        if st.button("🔄 Refresh", use_container_width=True):
+        if st.button("🔄 Refresh", width="stretch"):
             st.cache_data.clear()
             st.rerun()
     with rc2:
@@ -403,7 +404,7 @@ def _display_table(agg_df, label_col, label_name, tab_key):
         disp = disp[disp[label_name].astype(str).str.upper().str.contains(search.strip().upper())]
     st.dataframe(
         style_overview(disp),
-        use_container_width=True,
+        width="stretch",
         height=min(460, 38 + 35 * len(disp)),
         hide_index=True,
     )
@@ -551,7 +552,7 @@ def seller_drilldown():
 
     st.dataframe(
         style_overview(disp_city),
-        use_container_width=True,
+        width="stretch",
         height=min(420, 38 + 35 * len(disp_city)),
         hide_index=True,
     )
@@ -605,7 +606,7 @@ def seller_drilldown():
             )
             st.dataframe(
                 style_overview(disp_day),
-                use_container_width=True,
+                width="stretch",
                 height=min(400, 38 + 35 * len(disp_day)),
                 hide_index=True,
             )
