@@ -531,10 +531,6 @@ def seller_drilldown():
         )
 
     if chosen == "— Select a seller —":
-        st.info(
-            f"📅 Date range set to **{drill_start}** → **{drill_end}** "
-            f"({len(sellers_in_range)} sellers available). Pick a seller to load data."
-        )
         return
 
     sdf = date_scoped[date_scoped["seller_type"] == chosen]
