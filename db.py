@@ -56,12 +56,29 @@ def _get_secrets():
         return None, None
 
 
+def _resolve_ipv4(hostname: str) -> str | None:
+    """Resolve hostname to an IPv4 address, returning None if unavailable."""
+    import socket
+    try:
+        results = socket.getaddrinfo(hostname, None, socket.AF_INET)
+        if results:
+            return results[0][4][0]
+    except socket.gaierror:
+        pass
+    return None
+
+
 def _try_psycopg2(pg_conf: dict) -> pd.DataFrame | None:
     """Attempt a direct PostgreSQL read (fastest, works on Streamlit Cloud)."""
     try:
         import psycopg2
         conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
         conf["port"] = int(conf.get("port", 5432))
+
+        ipv4 = _resolve_ipv4(conf.get("host", ""))
+        if ipv4:
+            conf["hostaddr"] = ipv4
+
         conn = psycopg2.connect(**conf)
         df = pd.read_sql_query(
             f"SELECT {', '.join(DATA_DB_COLS)} FROM shipments", conn
@@ -100,7 +117,7 @@ def _rest_fetch_all(supa_conf: dict) -> pd.DataFrame | None:
             st.error(f"REST request error: {e}")
             return None
 
-        if r.status_code != 200:
+        if r.status_code not in (200, 206):
             st.error(f"REST API returned {r.status_code}: {r.text[:300]}")
             return None
         from io import StringIO
@@ -168,7 +185,12 @@ def _insert_psycopg2(df: pd.DataFrame, pg_conf: dict) -> tuple[bool, str]:
     try:
         import psycopg2
         from io import StringIO
-        conn = psycopg2.connect(**pg_conf, connect_timeout=10)
+        conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
+        conf["port"] = int(conf.get("port", 5432))
+        ipv4 = _resolve_ipv4(conf.get("host", ""))
+        if ipv4:
+            conf["hostaddr"] = ipv4
+        conn = psycopg2.connect(**conf)
         cur = conn.cursor()
         buf = StringIO()
         df.to_csv(buf, index=False, header=False)
