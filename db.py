@@ -198,30 +198,18 @@ def _connect_with_pooler_fallback(pg_conf: dict):
         raise ConnectionError("Cannot derive pooler config from host.")
 
     last_err = None
-    for region in POOLER_REGIONS:
-        pooler_conf = {
-            **pooler_base,
-            "host": f"aws-0-{region}.pooler.supabase.com",
-            "connect_timeout": 5,
-        }
-        try:
-            return psycopg2.connect(**pooler_conf)
-        except Exception as e:
-            last_err = e
-            continue
-
-    for region in POOLER_REGIONS:
-        pooler_conf = {
-            **pooler_base,
-            "host": f"aws-0-{region}.pooler.supabase.com",
-            "port": 6543,
-            "connect_timeout": 5,
-        }
-        try:
-            return psycopg2.connect(**pooler_conf)
-        except Exception as e:
-            last_err = e
-            continue
+    for prefix in ("aws-0", "aws-1"):
+        for region in POOLER_REGIONS:
+            pooler_conf = {
+                **pooler_base,
+                "host": f"{prefix}-{region}.pooler.supabase.com",
+                "connect_timeout": 5,
+            }
+            try:
+                return psycopg2.connect(**pooler_conf)
+            except Exception as e:
+                last_err = e
+                continue
 
     raise ConnectionError(f"All pooler regions failed. Last error: {last_err}")
 
