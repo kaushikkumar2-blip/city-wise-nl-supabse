@@ -19,7 +19,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-from db import load_from_supabase, insert_rows
+from db import load_from_supabase, insert_rows, DEFAULT_DAYS
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PAGE CONFIG
@@ -97,8 +97,8 @@ AGG_COLS = [
 #  DATA LOADING
 # ═════════════════════════════════════════════════════════════════════════════
 @st.cache_data(ttl=600, show_spinner="Loading data from Supabase …")
-def load_data() -> pd.DataFrame:
-    df = load_from_supabase()
+def load_data(days: int = DEFAULT_DAYS) -> pd.DataFrame:
+    df = load_from_supabase(days=days)
     if df is None:
         return pd.DataFrame()
     for col in NUMERIC_COLS:
@@ -267,7 +267,7 @@ with st.sidebar:
                      label_visibility="collapsed")
 
 # ── Load data ────────────────────────────────────────────────────────────────
-raw_df = load_data()
+raw_df = load_data(days=DEFAULT_DAYS)
 if raw_df.empty:
     st.error("Could not load data from Supabase. Check your connection settings.")
     st.stop()
