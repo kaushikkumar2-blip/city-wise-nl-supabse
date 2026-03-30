@@ -47,7 +47,7 @@ DATA_DB_COLS = [
     "reporting_date", "destination_city", "seller_type", "payment_type",
 ] + NUMERIC_DB_COLS
 
-DEFAULT_DAYS = 14
+DEFAULT_DAYS = 0
 
 POOLER_REGIONS = [
     "ap-south-1", "ap-southeast-1", "ap-southeast-2",
