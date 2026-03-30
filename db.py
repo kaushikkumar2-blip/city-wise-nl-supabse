@@ -60,13 +60,16 @@ def _try_psycopg2(pg_conf: dict) -> pd.DataFrame | None:
     """Attempt a direct PostgreSQL read (fastest, works on Streamlit Cloud)."""
     try:
         import psycopg2
-        conn = psycopg2.connect(**pg_conf, connect_timeout=10)
+        conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
+        conf["port"] = int(conf.get("port", 5432))
+        conn = psycopg2.connect(**conf)
         df = pd.read_sql_query(
             f"SELECT {', '.join(DATA_DB_COLS)} FROM shipments", conn
         )
         conn.close()
         return df
-    except Exception:
+    except Exception as e:
+        st.toast(f"psycopg2 failed: {e}", icon="⚠️")
         return None
 
 
@@ -117,6 +120,10 @@ def load_from_supabase() -> pd.DataFrame | None:
     """Load all shipment rows. Tries psycopg2 first, then REST API."""
     pg_conf, supa_conf = _get_secrets()
 
+    if not pg_conf and not supa_conf:
+        st.error("No database credentials found in Streamlit secrets.")
+        return None
+
     if pg_conf:
         df = _try_psycopg2(pg_conf)
         if df is not None:
@@ -128,6 +135,8 @@ def load_from_supabase() -> pd.DataFrame | None:
         if df is not None:
             df.rename(columns=DB_TO_DF, inplace=True)
             return df
+        else:
+            st.error("REST API fallback also failed.")
 
     return None
 
