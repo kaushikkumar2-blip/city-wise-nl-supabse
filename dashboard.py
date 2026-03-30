@@ -15,10 +15,13 @@ Requirements:
     pip install streamlit pandas numpy plotly
 """
 
+import pathlib
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
+
+_SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PAGE CONFIG
@@ -114,7 +117,8 @@ def load_data(path: str) -> pd.DataFrame:
 # ═════════════════════════════════════════════════════════════════════════════
 def _safe_pct(num, den):
     """Vectorised safe percentage: returns 0 where denominator is 0."""
-    return np.where(den > 0, num / den * 100, 0.0)
+    den_safe = np.where(den > 0, den, 1)
+    return np.where(den > 0, num / den_safe * 100, 0.0)
 
 
 def _add_pct_cols(df):
@@ -256,28 +260,13 @@ def style_overview(df, extra_fmt=None):
 # ═════════════════════════════════════════════════════════════════════════════
 #  SIDEBAR
 # ═════════════════════════════════════════════════════════════════════════════
+data_path = str(_SCRIPT_DIR / "362c62a8adb9d17ecb5a6c9d33385822.csv")
+
 with st.sidebar:
     st.markdown("## 📦 Seller × City Dashboard")
     st.divider()
-    data_path = st.text_input(
-        "CSV file path",
-        value="362c62a8adb9d17ecb5a6c9d33385822.csv",
-    )
-    rc1, rc2 = st.columns([1, 1])
-    with rc1:
-        if st.button("🔄 Refresh", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
-    with rc2:
-        auto_ref = st.toggle("Auto-refresh", value=False)
-    if auto_ref:
-        iv = st.select_slider(
-            "Interval", options=[30, 60, 120, 300, 600], value=120,
-            format_func=lambda s: f"{s // 60}m" if s >= 60 else f"{s}s",
-        )
-        st.markdown(f'<meta http-equiv="refresh" content="{iv}">', unsafe_allow_html=True)
-    st.divider()
-    st.markdown("### Filters")
+    page = st.radio("Navigation", ["Upload Data", "Dashboard View"], index=1,
+                     label_visibility="collapsed")
 
 # ── Load data ────────────────────────────────────────────────────────────────
 try:
@@ -289,63 +278,102 @@ except FileNotFoundError:
 all_sellers = sorted(raw_df["seller_type"].cat.categories.tolist())
 all_cities = sorted(raw_df["destination_city"].cat.categories.tolist())
 
-with st.sidebar:
-    selected_sellers = st.multiselect(
-        "Sellers", options=all_sellers, default=all_sellers,
-    )
-    payment_filter = st.radio("Payment Type", ["All", "COD", "Prepaid"], index=0)
-    min_vol = st.slider(
-        "Min Volume (PHin)", 0,
-        max(1, int(raw_df["PHin"].sum() // max(len(all_sellers), 1))),
-        0, step=100,
-    )
-    st.divider()
-
-    date_strs = sorted(raw_df["reporting_date"].unique())
-    try:
-        min_d = datetime.strptime(min(date_strs), "%Y%m%d").date()
-        max_d = datetime.strptime(max(date_strs), "%Y%m%d").date()
-    except (ValueError, TypeError):
-        min_d = max_d = datetime.now().date()
-    dc1, dc2 = st.columns(2)
-    with dc1:
-        start_date = st.date_input("From", value=min_d, min_value=min_d, max_value=max_d, key="sd")
-    with dc2:
-        end_date = st.date_input("To", value=max_d, min_value=min_d, max_value=max_d, key="ed")
-    if start_date > end_date:
-        start_date, end_date = end_date, start_date
-
-    st.divider()
+# ═════════════════════════════════════════════════════════════════════════════
+#  UPLOAD DATA PAGE
+# ═════════════════════════════════════════════════════════════════════════════
+if page == "Upload Data":
     st.markdown(
-        f"<span style='font-size:.72rem;color:#94A3B8'>"
-        f"{len(all_sellers)} sellers · {len(all_cities)} cities · "
-        f"{len(date_strs)} days</span>",
+        '<div class="section-hdr">'
+        '<span class="ico">📤</span>'
+        '<div><div class="ttl">Upload & Append Data</div>'
+        '<div class="sub">Upload a CSV file to append new records to the raw dataset</div></div></div>',
         unsafe_allow_html=True,
     )
 
-# ═════════════════════════════════════════════════════════════════════════════
-#  APPLY FILTERS
-# ═════════════════════════════════════════════════════════════════════════════
-s_str = start_date.strftime("%Y%m%d")
-e_str = end_date.strftime("%Y%m%d")
+    EXPECTED_COLS = [
+        "reporting_date", "destination_city", "seller_type", "payment_type",
+        "PHin", "conv_num", "zero_attempt_num", "fm_created", "fm_picked",
+        "fm_d0_picked", "DHin", "D0_OFD", "First_attempt_delivered", "fac_deno",
+        "total_delivered_attempts", "total_attempts", "rfr_num", "rfr_deno",
+        "Breach_Num", "Breach_Den", "breach_plus1_num",
+    ]
 
-mask = (
-    raw_df["seller_type"].isin(selected_sellers)
-    & (raw_df["reporting_date"] >= s_str)
-    & (raw_df["reporting_date"] <= e_str)
-)
-if payment_filter != "All":
-    mask = mask & (raw_df["payment_norm"] == payment_filter)
-filtered_df = raw_df.loc[mask]
+    with st.expander("📋 Expected columns & current data summary", expanded=False):
+        st.code(", ".join(EXPECTED_COLS))
+        ec1, ec2, ec3 = st.columns(3)
+        ec1.metric("Current rows", f"{len(raw_df):,}")
+        ec2.metric("Sellers", f"{len(all_sellers):,}")
+        ec3.metric("Cities", f"{len(all_cities):,}")
+
+    uploaded = st.file_uploader(
+        "Choose a CSV file", type=["csv"], key="upload_csv",
+    )
+
+    if uploaded is not None:
+        try:
+            new_df = pd.read_csv(uploaded)
+        except Exception as exc:
+            st.error(f"Failed to read CSV: {exc}")
+            st.stop()
+
+        missing = sorted(set(EXPECTED_COLS) - set(new_df.columns))
+        extra = sorted(set(new_df.columns) - set(EXPECTED_COLS))
+
+        if missing:
+            st.error(f"**Missing columns:** {', '.join(missing)}")
+            st.info("Upload a file that contains all expected columns listed above.")
+            st.stop()
+
+        if extra:
+            st.warning(f"Extra columns will be dropped: {', '.join(extra)}")
+
+        new_df = new_df[EXPECTED_COLS]
+
+        st.markdown(f"**Preview** — showing first 100 of **{len(new_df):,}** rows")
+        st.dataframe(new_df.head(100), width="stretch", hide_index=True)
+
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("Rows to append", f"{len(new_df):,}")
+        mc2.metric("Current rows", f"{len(raw_df):,}")
+        mc3.metric("Total after append", f"{len(raw_df) + len(new_df):,}")
+
+        if st.button("✅ Append to raw data", type="primary", width="stretch"):
+            try:
+                new_df.to_csv(data_path, mode="a", header=False, index=False)
+                st.cache_data.clear()
+                st.toast(f"Successfully appended {len(new_df):,} rows!", icon="✅")
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Failed to write to `{data_path}`: {exc}")
+    else:
+        st.info("Upload a CSV file with the expected columns to append data to the raw dataset.")
+
+    st.divider()
+    st.markdown(
+        "<div style='text-align:center;color:#94A3B8;font-size:.7rem'>"
+        "Seller × City Performance Dashboard · Upload Data</div>",
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  DASHBOARD PAGE — use all data (no sidebar filters)
+# ═════════════════════════════════════════════════════════════════════════════
+filtered_df = raw_df
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PRE-COMPUTE AGGREGATIONS (these feed the overview tables)
 # ═════════════════════════════════════════════════════════════════════════════
 kpis = overall_kpis(filtered_df)
 city_table = aggregate_by(filtered_df, "destination_city")
-city_table = city_table[city_table["PHin"] >= min_vol]
 seller_table = aggregate_by(filtered_df, "seller_type")
-seller_table = seller_table[seller_table["PHin"] >= min_vol]
+
+date_strs = sorted(raw_df["reporting_date"].unique())
+try:
+    min_d = datetime.strptime(min(date_strs), "%Y%m%d").date()
+    max_d = datetime.strptime(max(date_strs), "%Y%m%d").date()
+except (ValueError, TypeError):
+    min_d = max_d = datetime.now().date()
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  KPI CARDS
@@ -353,7 +381,7 @@ seller_table = seller_table[seller_table["PHin"] >= min_vol]
 st.markdown(
     f"<div style='font-size:.8rem;color:#64748B;margin-bottom:8px'>"
     f"<b>{len(seller_table)}</b> sellers · <b>{len(city_table)}</b> cities · "
-    f"Payment: {payment_filter} · {start_date} to {end_date}</div>",
+    f"{min_d} to {max_d}</div>",
     unsafe_allow_html=True,
 )
 
@@ -403,7 +431,7 @@ def _display_table(agg_df, label_col, label_name, tab_key):
         disp = disp[disp[label_name].astype(str).str.upper().str.contains(search.strip().upper())]
     st.dataframe(
         style_overview(disp),
-        use_container_width=True,
+        width="stretch",
         height=min(460, 38 + 35 * len(disp)),
         hide_index=True,
     )
@@ -503,10 +531,6 @@ def seller_drilldown():
         )
 
     if chosen == "— Select a seller —":
-        st.info(
-            f"📅 Date range set to **{drill_start}** → **{drill_end}** "
-            f"({len(sellers_in_range)} sellers available). Pick a seller to load data."
-        )
         return
 
     sdf = date_scoped[date_scoped["seller_type"] == chosen]
@@ -551,7 +575,7 @@ def seller_drilldown():
 
     st.dataframe(
         style_overview(disp_city),
-        use_container_width=True,
+        width="stretch",
         height=min(420, 38 + 35 * len(disp_city)),
         hide_index=True,
     )
@@ -605,7 +629,7 @@ def seller_drilldown():
             )
             st.dataframe(
                 style_overview(disp_day),
-                use_container_width=True,
+                width="stretch",
                 height=min(400, 38 + 35 * len(disp_day)),
                 hide_index=True,
             )
