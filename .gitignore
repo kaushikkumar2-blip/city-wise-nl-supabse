@@ -1,4 +1,7 @@
 .streamlit/secrets.toml
 __pycache__/
 *.pyc
+*.csv
+migrate_to_supabase.py
+test_*.py
 362c62a8adb9d17ecb5a6c9d33385822.csv
