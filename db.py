@@ -6,7 +6,6 @@ On local / corporate: falls back to REST API over HTTPS.
 """
 
 import os
-import ssl
 import pandas as pd
 import streamlit as st
 
@@ -56,37 +55,36 @@ def _get_secrets():
         return None, None
 
 
-def _resolve_ipv4(hostname: str) -> str | None:
-    """Resolve hostname to an IPv4 address, returning None if unavailable."""
-    import socket
-    try:
-        results = socket.getaddrinfo(hostname, None, socket.AF_INET)
-        if results:
-            return results[0][4][0]
-    except socket.gaierror:
-        pass
+POOLER_REGIONS = [
+    "ap-south-1", "us-east-1", "us-west-1", "eu-west-1",
+    "ap-southeast-1", "eu-central-1", "us-east-2",
+]
+
+
+def _build_pooler_conf(pg_conf: dict) -> dict | None:
+    """Derive Supavisor pooler config from a direct-connection config."""
+    host = pg_conf.get("host", "")
+    parts = host.split(".")
+    if len(parts) >= 3 and parts[0] == "db" and "supabase" in host:
+        project_ref = parts[1]
+        return {
+            **pg_conf,
+            "user": f"postgres.{project_ref}",
+        }
     return None
 
 
 def _try_psycopg2(pg_conf: dict) -> pd.DataFrame | None:
-    """Attempt a direct PostgreSQL read (fastest, works on Streamlit Cloud)."""
+    """Attempt a direct PostgreSQL read; falls back to Supavisor pooler."""
     try:
-        import psycopg2
-        conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
-        conf["port"] = int(conf.get("port", 5432))
-
-        ipv4 = _resolve_ipv4(conf.get("host", ""))
-        if ipv4:
-            conf["hostaddr"] = ipv4
-
-        conn = psycopg2.connect(**conf)
+        conn = _connect_with_pooler_fallback(pg_conf)
         df = pd.read_sql_query(
             f"SELECT {', '.join(DATA_DB_COLS)} FROM shipments", conn
         )
         conn.close()
         return df
     except Exception as e:
-        st.warning(f"Direct DB connection failed: {e}")
+        st.warning(f"DB connection failed: {e}")
         return None
 
 
@@ -180,17 +178,37 @@ def insert_rows(df: pd.DataFrame) -> tuple[bool, str]:
     return False, "No database credentials configured."
 
 
+def _connect_with_pooler_fallback(pg_conf: dict):
+    """Connect via direct host, falling back to Supavisor pooler regions."""
+    import psycopg2
+
+    conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
+    conf["port"] = int(conf.get("port", 5432))
+
+    try:
+        return psycopg2.connect(**conf)
+    except Exception:
+        pass
+
+    pooler_base = _build_pooler_conf(conf)
+    if not pooler_base:
+        raise ConnectionError("Cannot derive pooler config from host.")
+
+    last_err = None
+    for region in POOLER_REGIONS:
+        pooler_conf = {**pooler_base, "host": f"aws-0-{region}.pooler.supabase.com"}
+        try:
+            return psycopg2.connect(**pooler_conf)
+        except Exception as e:
+            last_err = e
+    raise ConnectionError(f"All pooler regions failed. Last error: {last_err}")
+
+
 def _insert_psycopg2(df: pd.DataFrame, pg_conf: dict) -> tuple[bool, str]:
     """Bulk insert via psycopg2 COPY (fastest)."""
     try:
-        import psycopg2
         from io import StringIO
-        conf = {**pg_conf, "sslmode": "require", "connect_timeout": 15}
-        conf["port"] = int(conf.get("port", 5432))
-        ipv4 = _resolve_ipv4(conf.get("host", ""))
-        if ipv4:
-            conf["hostaddr"] = ipv4
-        conn = psycopg2.connect(**conf)
+        conn = _connect_with_pooler_fallback(pg_conf)
         cur = conn.cursor()
         buf = StringIO()
         df.to_csv(buf, index=False, header=False)
