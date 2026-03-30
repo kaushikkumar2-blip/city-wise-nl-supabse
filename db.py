@@ -69,7 +69,7 @@ def _try_psycopg2(pg_conf: dict) -> pd.DataFrame | None:
         conn.close()
         return df
     except Exception as e:
-        st.toast(f"psycopg2 failed: {e}", icon="⚠️")
+        st.warning(f"Direct DB connection failed: {e}")
         return None
 
 
@@ -88,19 +88,20 @@ def _rest_fetch_all(supa_conf: dict) -> pd.DataFrame | None:
         "Prefer": "count=exact",
     }
 
-    verify = not os.environ.get("SUPABASE_NO_SSL_VERIFY")
     all_frames = []
-    page_size = 50_000
+    page_size = 1000
     offset = 0
 
     while True:
         ep = f"{url}/rest/v1/shipments?select={','.join(DATA_DB_COLS)}&limit={page_size}&offset={offset}"
         try:
-            r = requests.get(ep, headers=headers, timeout=60, verify=verify)
-        except requests.exceptions.SSLError:
-            r = requests.get(ep, headers=headers, timeout=60, verify=False)
+            r = requests.get(ep, headers=headers, timeout=120)
+        except Exception as e:
+            st.error(f"REST request error: {e}")
+            return None
 
         if r.status_code != 200:
+            st.error(f"REST API returned {r.status_code}: {r.text[:300]}")
             return None
         from io import StringIO
         chunk = pd.read_csv(StringIO(r.text))
@@ -112,6 +113,7 @@ def _rest_fetch_all(supa_conf: dict) -> pd.DataFrame | None:
         offset += page_size
 
     if not all_frames:
+        st.warning("REST API returned no data rows.")
         return None
     return pd.concat(all_frames, ignore_index=True)
 
