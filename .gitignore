@@ -1,0 +1,4 @@
+.streamlit/secrets.toml
+__pycache__/
+*.pyc
+362c62a8adb9d17ecb5a6c9d33385822.csv

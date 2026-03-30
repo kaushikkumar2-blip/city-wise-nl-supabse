@@ -15,13 +15,11 @@ Requirements:
     pip install streamlit pandas numpy plotly
 """
 
-import pathlib
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
-
-_SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
+from db import load_from_supabase, insert_rows
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  PAGE CONFIG
@@ -98,9 +96,11 @@ AGG_COLS = [
 # ═════════════════════════════════════════════════════════════════════════════
 #  DATA LOADING
 # ═════════════════════════════════════════════════════════════════════════════
-@st.cache_data(ttl=600, show_spinner="Loading CSV data …")
-def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, low_memory=False)
+@st.cache_data(ttl=600, show_spinner="Loading data from Supabase …")
+def load_data() -> pd.DataFrame:
+    df = load_from_supabase()
+    if df is None:
+        return pd.DataFrame()
     for col in NUMERIC_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("float32")
@@ -260,8 +260,6 @@ def style_overview(df, extra_fmt=None):
 # ═════════════════════════════════════════════════════════════════════════════
 #  SIDEBAR
 # ═════════════════════════════════════════════════════════════════════════════
-data_path = str(_SCRIPT_DIR / "362c62a8adb9d17ecb5a6c9d33385822.csv")
-
 with st.sidebar:
     st.markdown("## 📦 Seller × City Dashboard")
     st.divider()
@@ -269,10 +267,9 @@ with st.sidebar:
                      label_visibility="collapsed")
 
 # ── Load data ────────────────────────────────────────────────────────────────
-try:
-    raw_df = load_data(data_path)
-except FileNotFoundError:
-    st.error(f"File not found: `{data_path}`. Update the path in the sidebar.")
+raw_df = load_data()
+if raw_df.empty:
+    st.error("Could not load data from Supabase. Check your connection settings.")
     st.stop()
 
 all_sellers = sorted(raw_df["seller_type"].cat.categories.tolist())
@@ -286,7 +283,7 @@ if page == "Upload Data":
         '<div class="section-hdr">'
         '<span class="ico">📤</span>'
         '<div><div class="ttl">Upload & Append Data</div>'
-        '<div class="sub">Upload a CSV file to append new records to the raw dataset</div></div></div>',
+        '<div class="sub">Upload a CSV file to append new records to the Supabase database</div></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -337,16 +334,17 @@ if page == "Upload Data":
         mc2.metric("Current rows", f"{len(raw_df):,}")
         mc3.metric("Total after append", f"{len(raw_df) + len(new_df):,}")
 
-        if st.button("✅ Append to raw data", type="primary", width="stretch"):
-            try:
-                new_df.to_csv(data_path, mode="a", header=False, index=False)
+        if st.button("✅ Append to Supabase", type="primary", width="stretch"):
+            with st.spinner("Inserting rows into Supabase..."):
+                ok, msg = insert_rows(new_df)
+            if ok:
                 st.cache_data.clear()
-                st.toast(f"Successfully appended {len(new_df):,} rows!", icon="✅")
+                st.toast(msg, icon="✅")
                 st.rerun()
-            except Exception as exc:
-                st.error(f"Failed to write to `{data_path}`: {exc}")
+            else:
+                st.error(f"Insert failed: {msg}")
     else:
-        st.info("Upload a CSV file with the expected columns to append data to the raw dataset.")
+        st.info("Upload a CSV file with the expected columns to append data to Supabase.")
 
     st.divider()
     st.markdown(
