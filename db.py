@@ -8,6 +8,8 @@ IPv6 connections are unavailable (e.g. Streamlit Cloud).
 
 import os
 from io import StringIO
+from urllib.parse import unquote, urlparse
+
 import pandas as pd
 import streamlit as st
 
@@ -58,6 +60,34 @@ POOLER_REGIONS = [
 ]
 
 
+def _pg_from_database_url() -> dict | None:
+    """Parse postgres:// or postgresql:// URL (Railway, Supabase connection strings)."""
+    raw = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("SUPABASE_DB_URL")
+        or os.environ.get("POSTGRES_URL")
+        or ""
+    ).strip()
+    if not raw:
+        return None
+    try:
+        if raw.startswith("postgres://"):
+            raw = "postgresql://" + raw[len("postgres://") :]
+        p = urlparse(raw)
+        if not p.hostname:
+            return None
+        path = (p.path or "").lstrip("/") or "postgres"
+        return {
+            "host": p.hostname,
+            "port": str(p.port or 5432),
+            "dbname": path,
+            "user": unquote(p.username or ""),
+            "password": unquote(p.password or ""),
+        }
+    except Exception:
+        return None
+
+
 def _get_secrets():
     """Streamlit Cloud / local: st.secrets. Railway / Docker: env vars."""
     pg_conf = None
@@ -84,6 +114,9 @@ def _get_secrets():
                 or os.environ.get("PGPASSWORD")
                 or "",
             }
+
+    if not pg_conf or not pg_conf.get("host"):
+        pg_conf = _pg_from_database_url()
 
     if not supa_conf or not supa_conf.get("url"):
         url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
@@ -145,8 +178,13 @@ def load_from_supabase(days: int = DEFAULT_DAYS) -> pd.DataFrame | None:
         days: only fetch the last N days of data. 0 = all data.
     """
     pg_conf, _ = _get_secrets()
-    if not pg_conf:
-        st.error("No [postgres] credentials found in Streamlit secrets.")
+    if not pg_conf or not pg_conf.get("host"):
+        st.error(
+            "No database credentials. On **Railway**, set either `DATABASE_URL` "
+            "(paste your Supabase pooler URI) or `POSTGRES_HOST`, `POSTGRES_USER`, "
+            "`POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_PORT`. "
+            "On **Streamlit Cloud**, use Secrets with a `[postgres]` section."
+        )
         return None
 
     cols = ", ".join(DATA_DB_COLS)
