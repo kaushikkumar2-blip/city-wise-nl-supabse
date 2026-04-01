@@ -59,10 +59,43 @@ POOLER_REGIONS = [
 
 
 def _get_secrets():
+    """Streamlit Cloud / local: st.secrets. Railway / Docker: env vars."""
+    pg_conf = None
+    supa_conf = None
     try:
-        return dict(st.secrets["postgres"]), dict(st.secrets.get("supabase", {}))
+        sec = st.secrets
+        pg_conf = dict(sec["postgres"])
+        try:
+            supa_conf = dict(sec["supabase"])
+        except Exception:
+            supa_conf = {}
     except Exception:
-        return None, None
+        pass
+
+    if not pg_conf or not pg_conf.get("host"):
+        host = os.environ.get("POSTGRES_HOST") or os.environ.get("PGHOST")
+        if host:
+            pg_conf = {
+                "host": host,
+                "port": os.environ.get("POSTGRES_PORT") or os.environ.get("PGPORT") or "5432",
+                "dbname": os.environ.get("POSTGRES_DB") or os.environ.get("PGDATABASE") or "postgres",
+                "user": os.environ.get("POSTGRES_USER") or os.environ.get("PGUSER"),
+                "password": os.environ.get("POSTGRES_PASSWORD")
+                or os.environ.get("PGPASSWORD")
+                or "",
+            }
+
+    if not supa_conf or not supa_conf.get("url"):
+        url = (os.environ.get("SUPABASE_URL") or "").strip().rstrip("/")
+        key = (
+            os.environ.get("SUPABASE_KEY")
+            or os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+            or ""
+        ).strip()
+        if url and key:
+            supa_conf = {"url": url, "key": key}
+
+    return pg_conf, supa_conf
 
 
 def _build_pooler_conf(pg_conf: dict) -> dict | None:
